@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useState, useEffect } from "react";
 import { DndContext, useDraggable, useDroppable } from "@dnd-kit/core";
 import { restrictToWindowEdges } from "@dnd-kit/modifiers";
 import {
@@ -46,6 +46,8 @@ interface TimeSlot {
   start: string;
   end: string;
 }
+// ahora: clave de celda -> lista de subjectIds
+type AssignedMap = Record<string, string[]>;
 
 /* ---------- Draggable chip ---------- */
 function Chip({ id, label }: { id: string; label: string }) {
@@ -71,17 +73,17 @@ function Chip({ id, label }: { id: string; label: string }) {
   );
 }
 
-/* ---------- Droppable cell ---------- */
+/* ---------- Droppable cell (admite múltiples asignaturas) ---------- */
 function DropCell({
   id,
   disabled,
-  assigned,
-  onRemove,
+  assignedList,
+  onRemoveOne,
 }: {
   id: string;
   disabled?: boolean;
-  assigned?: Subject | null;
-  onRemove?: () => void;
+  assignedList?: Subject[];
+  onRemoveOne?: (subjectId: string) => void;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id, disabled });
   return (
@@ -95,25 +97,31 @@ function DropCell({
           : "bg-white"
       }`}
     >
-      {assigned ? (
-        <div
-          className={`relative p-2 rounded-xl border shadow-sm ${
-            disabled ? "opacity-60" : "bg-gray-50"
-          }`}
-        >
-          <div className="text-sm font-semibold leading-tight">
-            {assigned.siglas} · {assigned.codigo}
-          </div>
-          <div className="text-xs opacity-80">Nivel: {assigned.nivel}</div>
-          {!disabled && (
-            <button
-              onClick={onRemove}
-              className="absolute -top-2 -right-2 w-6 h-6 rounded-full border bg-white shadow text-xs"
-              aria-label="Eliminar asignación"
+      {assignedList && assignedList.length > 0 ? (
+        <div className="space-y-2">
+          {assignedList.map((s) => (
+            <div
+              key={s.id}
+              className={`relative p-2 rounded-xl border shadow-sm ${
+                disabled ? "opacity-60" : "bg-gray-50"
+              }`}
             >
-              ×
-            </button>
-          )}
+              <div className="text-sm font-semibold leading-tight">
+                {s.siglas} · {s.codigo}
+              </div>
+              <div className="text-xs opacity-80">Nivel: {s.nivel}</div>
+              {!disabled && onRemoveOne && (
+                <button
+                  onClick={() => onRemoveOne(s.id)}
+                  className="absolute -top-2 -right-2 w-6 h-6 rounded-full border bg-white shadow text-xs"
+                  aria-label="Eliminar asignación"
+                  title="Eliminar de esta celda"
+                >
+                  ×
+                </button>
+              )}
+            </div>
+          ))}
         </div>
       ) : (
         <div className="text-xs text-gray-400 italic">
@@ -147,8 +155,8 @@ export default function ExamPlanner() {
     { start: "15:00", end: "17:00" },
   ]);
 
-  // Map de asignaciones: "YYYY-MM-DD|slotIndex" -> subjectId
-  const [assigned, setAssigned] = useState<Record<string, string>>({});
+  // Map de asignaciones: "YYYY-MM-DD|slotIndex" -> lista de subjectIds
+  const [assigned, setAssigned] = useState<AssignedMap>({});
 
   const startDate = useMemo(() => parseISO(startStr), [startStr]);
   const endDate = useMemo(() => parseISO(endStr), [endStr]);
@@ -162,6 +170,7 @@ export default function ExamPlanner() {
     return isBefore(dayDate, startDate) || isAfter(dayDate, endDate);
   }
 
+  // AÑADIR: permitir múltiples por celda (sin duplicar la misma asignatura dentro de la celda)
   function onDragEnd(e: any) {
     const subjectId = e.active?.id as string;
     const dropId = e.over?.id as string | undefined;
@@ -171,15 +180,24 @@ export default function ExamPlanner() {
     const slotIndex = Number(slotIndexStr);
     const dayDate = parseISO(dateIso);
     if (isDisabledDay(dayDate)) return;
-    const key = cellKey(dayDate, slotIndex);
-    setAssigned((prev) => ({ ...prev, [key]: subjectId }));
-  }
 
-  function removeAssignment(dateIso: string, slotIndex: number) {
     const key = `${dateIso}|${slotIndex}`;
     setAssigned((prev) => {
-      const copy = { ...prev };
-      delete copy[key];
+      const list = prev[key] ?? [];
+      if (list.includes(subjectId)) return prev; // evita duplicar la misma asignatura en esta celda
+      return { ...prev, [key]: [...list, subjectId] };
+    });
+  }
+
+  // Eliminar solo UNA asignatura de la celda
+  function removeOneFromCell(dateIso: string, slotIndex: number, subjectId: string) {
+    const key = `${dateIso}|${slotIndex}`;
+    setAssigned((prev) => {
+      const list = prev[key] ?? [];
+      const next = list.filter((id) => id !== subjectId);
+      const copy: AssignedMap = { ...prev };
+      if (next.length === 0) delete copy[key];
+      else copy[key] = next;
       return copy;
     });
   }
@@ -227,14 +245,50 @@ export default function ExamPlanner() {
     reader.readAsText(file);
   }
 
+  // (Opcional) Soporte para preset/data vía URL (si lo añadiste antes)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const preset = params.get("preset");
+    if (preset) {
+      fetch(preset)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((json) => {
+          if (!json) return;
+          try {
+            if (json.startStr) setStartStr(json.startStr);
+            if (json.endStr) setEndStr(json.endStr);
+            if (Array.isArray(json.slots)) setSlots(json.slots);
+            if (Array.isArray(json.subjects)) setSubjects(json.subjects);
+            if (json.assigned) setAssigned(json.assigned);
+          } catch {}
+        })
+        .catch(() => {});
+      return;
+    }
+    const data = params.get("data");
+    if (data) {
+      try {
+        const json = JSON.parse(decodeURIComponent(escape(atob(data))));
+        if (json.startStr) setStartStr(json.startStr);
+        if (json.endStr) setEndStr(json.endStr);
+        if (Array.isArray(json.slots)) setSlots(json.slots);
+        if (Array.isArray(json.subjects)) setSubjects(json.subjects);
+        if (json.assigned) setAssigned(json.assigned);
+      } catch {}
+    }
+  }, []);
+
   /* ---------- Render ---------- */
+ 
+
   return (
     <div className="p-6 max-w-[1200px] mx-auto">
       <h1 className="text-2xl font-bold mb-2">Planificador d'exàmens (drag & drop)</h1>
       <p className="text-sm mb-6">
         Define el rang de dates i franjes; comparteix l'enllaç amb responsables
         perquè arrosseguin assignatures a dies i franges. Dies fora del rang es
-        mostren en gris i no accepten exàmens.
+        mostren en gris i no accepten exàmens. Ara cada cel·la pot contenir
+        diverses assignatures alhora.
       </p>
 
       {/* Configuración */}
@@ -450,18 +504,19 @@ export default function ExamPlanner() {
                           const day = addDays(mon, i);
                           const dateIso = format(day, "yyyy-MM-dd");
                           const disabled = isDisabledDay(day);
-                          const key = cellKey(day, slotIndex);
-                          const subjId = assigned[key];
-                          const subj =
-                            subjects.find((x) => x.id === subjId) || null;
+                          const key = `${dateIso}|${slotIndex}`;
+                          const subjIds = assigned[key] ?? [];
+                          const assignedList = subjIds
+                            .map((id) => subjects.find((x) => x.id === id))
+                            .filter(Boolean) as Subject[];
                           return (
                             <DropCell
                               key={i}
                               id={`cell:${dateIso}:${slotIndex}`}
                               disabled={disabled}
-                              assigned={subj}
-                              onRemove={() =>
-                                removeAssignment(dateIso, slotIndex)
+                              assignedList={assignedList}
+                              onRemoveOne={(subjectId) =>
+                                removeOneFromCell(dateIso, slotIndex, subjectId)
                               }
                             />
                           );
@@ -480,11 +535,14 @@ export default function ExamPlanner() {
         <ul className="list-disc ml-5 space-y-1">
           <li>
             Arrossega una assignatura a una cel·la disponible per assignar
-            l'examen. Pots eliminar-la amb la ✕.
+            l'examen. Pots eliminar cadascuna amb la ✕.
           </li>
           <li>
             Els dies fora del rang definit es mostren en gris i no accepten
             exàmens.
+          </li>
+          <li>
+            Una mateixa cel·la pot contenir múltiples assignatures (exàmens simultanis).
           </li>
           <li>
             Utilitza Exportar/Importar JSON per compartir o guardar
