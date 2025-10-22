@@ -46,7 +46,7 @@ interface TimeSlot {
   start: string;
   end: string;
 }
-// ahora: clave de celda -> lista de subjectIds
+// Múltiples por celda: "YYYY-MM-DD|slotIndex" -> lista de subjectIds
 type AssignedMap = Record<string, string[]>;
 
 /* ---------- Draggable chip ---------- */
@@ -134,7 +134,7 @@ function DropCell({
 
 /* ---------- Main component ---------- */
 export default function ExamPlanner() {
-  // Asignaturas demo (puedes cargarlas por CSV)
+  // Asignaturas (puedes cargarlas por CSV)
   const [subjects, setSubjects] = useState<Subject[]>([
     { id: "mat101", codigo: "MAT101", siglas: "CALC I", nivel: "GRAU" },
     { id: "fis201", codigo: "FIS201", siglas: "FIS II", nivel: "GRAU" },
@@ -155,7 +155,7 @@ export default function ExamPlanner() {
     { start: "15:00", end: "17:00" },
   ]);
 
-  // Map de asignaciones: "YYYY-MM-DD|slotIndex" -> lista de subjectIds
+  // Mapa de asignaciones
   const [assigned, setAssigned] = useState<AssignedMap>({});
 
   const startDate = useMemo(() => parseISO(startStr), [startStr]);
@@ -170,26 +170,48 @@ export default function ExamPlanner() {
     return isBefore(dayDate, startDate) || isAfter(dayDate, endDate);
   }
 
-  // AÑADIR: permitir múltiples por celda (sin duplicar la misma asignatura dentro de la celda)
+  // IDs ya usados en alguna celda (para ocultarlos de la bandeja y bloquear duplicado global)
+  const usedIds = useMemo(() => {
+    const s = new Set<string>();
+    for (const list of Object.values(assigned)) {
+      for (const id of list) s.add(id);
+    }
+    return s;
+  }, [assigned]);
+
+  // Lista de asignaturas disponibles (no usadas aún)
+  const availableSubjects = useMemo(
+    () => subjects.filter((s) => !usedIds.has(s.id)),
+    [subjects, usedIds]
+  );
+
+  // Drag & drop: añade a la celda si la asignatura no está ya usada en el calendario
   function onDragEnd(e: any) {
     const subjectId = e.active?.id as string;
     const dropId = e.over?.id as string | undefined;
     if (!dropId) return;
     if (!dropId.startsWith("cell:")) return;
+
     const [, dateIso, slotIndexStr] = dropId.split(":");
     const slotIndex = Number(slotIndexStr);
     const dayDate = parseISO(dateIso);
     if (isDisabledDay(dayDate)) return;
 
+    // Si ya está programada en cualquier celda, no permitir duplicar
+    if (usedIds.has(subjectId)) {
+      alert("Esta asignatura ya está programada en el calendario.");
+      return;
+    }
+
     const key = `${dateIso}|${slotIndex}`;
     setAssigned((prev) => {
       const list = prev[key] ?? [];
-      if (list.includes(subjectId)) return prev; // evita duplicar la misma asignatura en esta celda
+      if (list.includes(subjectId)) return prev; // (por si acaso) no duplicar dentro de la misma celda
       return { ...prev, [key]: [...list, subjectId] };
     });
   }
 
-  // Eliminar solo UNA asignatura de la celda
+  // Eliminar solo UNA asignatura de la celda (vuelve a la bandeja automáticamente)
   function removeOneFromCell(dateIso: string, slotIndex: number, subjectId: string) {
     const key = `${dateIso}|${slotIndex}`;
     setAssigned((prev) => {
@@ -245,7 +267,7 @@ export default function ExamPlanner() {
     reader.readAsText(file);
   }
 
-  // (Opcional) Soporte para preset/data vía URL (si lo añadiste antes)
+  // (Opcional) Soporte para preset/data vía URL (si lo añadiste)
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const preset = params.get("preset");
@@ -279,16 +301,13 @@ export default function ExamPlanner() {
   }, []);
 
   /* ---------- Render ---------- */
- 
-
   return (
     <div className="p-6 max-w-[1200px] mx-auto">
       <h1 className="text-2xl font-bold mb-2">Planificador d'exàmens (drag & drop)</h1>
       <p className="text-sm mb-6">
-        Define el rang de dates i franjes; comparteix l'enllaç amb responsables
-        perquè arrosseguin assignatures a dies i franges. Dies fora del rang es
-        mostren en gris i no accepten exàmens. Ara cada cel·la pot contenir
-        diverses assignatures alhora.
+        Pots posar múltiples assignatures a la mateixa cel·la (exàmens simultanis),
+        però cada assignatura només es pot programar una vegada en tot el calendari:
+        en arrossegar-la, desapareix de la llista d’assignatures disponibles.
       </p>
 
       {/* Configuración */}
@@ -309,7 +328,7 @@ export default function ExamPlanner() {
             onChange={(e) => setEndStr(e.target.value)}
             className="w-full border rounded-xl p-2"
           />
-          <div className="flex gap-3 mt-3">
+          <div className="flex flex-wrap gap-3 mt-3">
             <button
               onClick={exportJSON}
               className="px-3 py-2 border rounded-xl shadow-sm"
@@ -325,6 +344,9 @@ export default function ExamPlanner() {
                 className="hidden"
               />
             </label>
+            <span className="text-xs text-gray-500 self-center">
+              Disponibles: {availableSubjects.length}/{subjects.length}
+            </span>
           </div>
         </div>
 
@@ -382,17 +404,22 @@ export default function ExamPlanner() {
 
       {/* DndContext envuelve chips + calendario */}
       <DndContext onDragEnd={onDragEnd} modifiers={[restrictToWindowEdges]}>
-        {/* Asignaturas */}
+        {/* Asignaturas disponibles */}
         <div className="p-4 rounded-2xl border shadow-sm bg-white mb-6">
           <h2 className="font-semibold mb-3">Assignatures (arrossega)</h2>
           <div className="flex flex-wrap gap-2">
-            {subjects.map((s) => (
+            {availableSubjects.map((s) => (
               <Chip
                 key={s.id}
                 id={s.id}
                 label={`${s.siglas} · ${s.codigo} · ${s.nivel}`}
               />
             ))}
+            {availableSubjects.length === 0 && (
+              <div className="text-xs text-gray-500 italic">
+                No queden assignatures per programar.
+              </div>
+            )}
           </div>
           <div className="mt-3 flex items-center gap-3 text-sm">
             <label className="px-3 py-2 border rounded-xl shadow-sm cursor-pointer bg-white">
@@ -485,7 +512,9 @@ export default function ExamPlanner() {
                             key={i}
                             className="border p-2 min-w-[170px] text-left"
                           >
-                            <div className="font-semibold">{dayLabels[i]}</div>
+                            <div className="font-semibold">
+                              {["Dl/Mon", "Dt/Tu", "Dc/Wed", "Dj/Thu", "Dv/Fri"][i]}
+                            </div>
                             <div className="text-xs text-gray-500">
                               {fmtDM(day)}
                             </div>
@@ -534,19 +563,17 @@ export default function ExamPlanner() {
       <div className="mt-8 text-xs text-gray-500">
         <ul className="list-disc ml-5 space-y-1">
           <li>
-            Arrossega una assignatura a una cel·la disponible per assignar
-            l'examen. Pots eliminar cadascuna amb la ✕.
+            Pots programar múltiples assignatures a la mateixa cel·la (exàmens simultanis).
           </li>
           <li>
-            Els dies fora del rang definit es mostren en gris i no accepten
-            exàmens.
+            Cada assignatura només es pot programar una vegada en tot el calendari.
+            Si l'elimines d'una cel·la, tornarà a aparèixer a la llista.
           </li>
           <li>
-            Una mateixa cel·la pot contenir múltiples assignatures (exàmens simultanis).
+            Els dies fora del rang definit es mostren en gris i no accepten exàmens.
           </li>
           <li>
-            Utilitza Exportar/Importar JSON per compartir o guardar
-            configuracions i assignacions.
+            Exporta/Importa JSON per compartir o guardar configuracions i assignacions.
           </li>
         </ul>
       </div>
