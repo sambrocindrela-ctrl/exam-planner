@@ -1,8 +1,16 @@
 import React, { useMemo, useState } from "react";
 import { DndContext, useDraggable, useDroppable } from "@dnd-kit/core";
 import { restrictToWindowEdges } from "@dnd-kit/modifiers";
-import { format, addDays, subDays, isBefore, isAfter, startOfDay, parseISO } from "date-fns";
-import Papa from "papaparse";
+import {
+  format,
+  addDays,
+  subDays,
+  isBefore,
+  isAfter,
+  startOfDay,
+  parseISO,
+} from "date-fns";
+import * as Papa from "papaparse";
 
 /* ---------- Helpers ---------- */
 function mondayOfWeek(d: Date) {
@@ -34,11 +42,15 @@ interface Subject {
   siglas: string;
   nivel: string;
 }
-interface TimeSlot { start: string; end: string; }
+interface TimeSlot {
+  start: string;
+  end: string;
+}
 
 /* ---------- Draggable chip ---------- */
 function Chip({ id, label }: { id: string; label: string }) {
-  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id });
+  const { attributes, listeners, setNodeRef, transform, isDragging } =
+    useDraggable({ id });
   return (
     <div
       ref={setNodeRef}
@@ -97,6 +109,7 @@ function DropCell({
             <button
               onClick={onRemove}
               className="absolute -top-2 -right-2 w-6 h-6 rounded-full border bg-white shadow text-xs"
+              aria-label="Eliminar asignación"
             >
               ×
             </button>
@@ -113,7 +126,7 @@ function DropCell({
 
 /* ---------- Main component ---------- */
 export default function ExamPlanner() {
-  // Asignaturas demo (puedes cargar las tuyas por CSV)
+  // Asignaturas demo (puedes cargarlas por CSV)
   const [subjects, setSubjects] = useState<Subject[]>([
     { id: "mat101", codigo: "MAT101", siglas: "CALC I", nivel: "GRAU" },
     { id: "fis201", codigo: "FIS201", siglas: "FIS II", nivel: "GRAU" },
@@ -340,17 +353,31 @@ export default function ExamPlanner() {
                   Papa.parse(f, {
                     header: true,
                     skipEmptyLines: true,
-                    complete: (res) => {
+                    complete: (res: Papa.ParseResult<any>) => {
                       try {
                         const rows = (res.data as any[]).filter(Boolean);
                         const out: Subject[] = [];
                         for (const r of rows) {
                           const codigo =
-                            r.codigo || r.CODIGO || r.Codi || r["CODI UPC"] || r.codi || r.CODI;
+                            r.codigo ||
+                            r.CODIGO ||
+                            r.Codi ||
+                            r["CODI UPC"] ||
+                            r.codi ||
+                            r.CODI;
                           const siglas =
-                            r.siglas || r.SIGLAS || r.sigles || r["sigles"] || r.SIGLES;
+                            r.siglas ||
+                            r.SIGLAS ||
+                            r.sigles ||
+                            r["sigles"] ||
+                            r.SIGLES;
                           const nivel =
-                            r.nivel || r.NIVEL || r.nivell || r.NIVELL || r.level || r.LEVEL;
+                            r.nivel ||
+                            r.NIVEL ||
+                            r.nivell ||
+                            r.NIVELL ||
+                            r.level ||
+                            r.LEVEL;
                           if (!codigo && !siglas) continue;
                           out.push({
                             id: String(codigo || siglas),
@@ -404,9 +431,7 @@ export default function ExamPlanner() {
                             key={i}
                             className="border p-2 min-w-[170px] text-left"
                           >
-                            <div className="font-semibold">
-                              {["Dl/Mon","Dt/Tu","Dc/Wed","Dj/Thu","Dv/Fri"][i]}
-                            </div>
+                            <div className="font-semibold">{dayLabels[i]}</div>
                             <div className="text-xs text-gray-500">
                               {fmtDM(day)}
                             </div>
