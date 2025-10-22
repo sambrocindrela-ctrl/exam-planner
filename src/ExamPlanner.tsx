@@ -161,12 +161,7 @@ export default function ExamPlanner() {
   const startDate = useMemo(() => parseISO(startStr), [startStr]);
   const endDate = useMemo(() => parseISO(endStr), [endStr]);
 
-  const dayLabels = ["Dl/Mon", "Dt/Tu", "Dc/Wed", "Dj/Thu", "Dv/Fri"];
-
-  function cellKey(dayDate: Date, slotIndex: number) {
-    return `${format(dayDate, "yyyy-MM-dd")}|${slotIndex}`;
-  }
-  function isDisabledDay(dayDate: Date) {
+   function isDisabledDay(dayDate: Date) {
     return isBefore(dayDate, startDate) || isAfter(dayDate, endDate);
   }
 
