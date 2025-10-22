@@ -1,0 +1,7 @@
+@import "tailwindcss";
+/* Habilita utilidades de Tailwind para usarlas con @apply en este archivo */
+@reference "tailwindcss/utilities";
+
+@layer base {
+  body { @apply bg-gray-50; }
+}
