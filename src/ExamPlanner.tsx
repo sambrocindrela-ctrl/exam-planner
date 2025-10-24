@@ -321,7 +321,7 @@ export default function ExamPlanner() {
     for (const p of periods) {
       const slots = slotsPerPeriod[p.id] ?? [];
       const amap = assignedPerPeriod[p.id] ?? {};
-      for (const {mon, fri} of eachWeek(mondayOfWeek(parseISO(p.startStr)), fridayOfWeek(parseISO(p.endStr)))) {
+      for (const { mon } of eachWeek(mondayOfWeek(parseISO(p.startStr)), fridayOfWeek(parseISO(p.endStr)))) {
         for (let si=0; si<slots.length; si++) {
           for (let i=0;i<5;i++) {
             const day = addDays(mon, i);
@@ -377,7 +377,7 @@ export default function ExamPlanner() {
       const slots = slotsPerPeriod[p.id] ?? [];
       const amap = assignedPerPeriod[p.id] ?? {};
       const label = `${p.tipus} ${p.any} Q${p.quad}`;
-      for (const {mon, fri} of eachWeek(mondayOfWeek(parseISO(p.startStr)), fridayOfWeek(parseISO(p.endStr)))) {
+      for (const { mon } of eachWeek(mondayOfWeek(parseISO(p.startStr)), fridayOfWeek(parseISO(p.endStr)))) {
         for (let si=0; si<slots.length; si++) {
           for (let i=0;i<5;i++) {
             const day = addDays(mon, i);
@@ -708,15 +708,12 @@ export default function ExamPlanner() {
                 <thead>
                   <tr>
                     <th className="border p-2 w-[160px] text-left">franja horària/Time slot</th>
-                    {Array.from({length:5}).map((_,i)=>{
-                      const day = addDays(mondayOfWeek(parseISO(activePeriod.startStr)), i);
-                      return (
-                        <th key={i} className="border p-2 min-w-[170px] text-left">
-                          <div className="font-semibold">{dayLabels[i]}</div>
-                          {/* Mostrem la data real de cada setmana a la taula del cos */}
-                        </th>
-                      );
-                    })}
+                    {Array.from({length:5}).map((_,i)=>(
+  <th key={i} className="border p-2 min-w-[170px] text-left">
+    <div className="font-semibold">{dayLabels[i]}</div>
+    {/* Mostrem la data real de cada setmana a la taula del cos */}
+  </th>
+))}
                   </tr>
                 </thead>
                 <tbody>
