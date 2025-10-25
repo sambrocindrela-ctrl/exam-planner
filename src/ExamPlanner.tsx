@@ -42,15 +42,20 @@ interface Subject {
   codigo: string;
   siglas: string;
   nivel: string;
+  curs?: string;
+  quad?: 1 | 2;
 }
-interface TimeSlot { start: string; end: string; }
+interface TimeSlot {
+  start: string;
+  end: string;
+}
 interface PeriodMeta {
-  id: number;            // únic (1..5)
-  tipus: TipusPeriode;   // PARCIAL | FINAL | REAVALUACIÓ
-  any: number;           // 2025..2090
-  quad: 1 | 2;           // 1 | 2
-  startStr: string;      // yyyy-MM-dd
-  endStr: string;        // yyyy-MM-dd
+  id: number;
+  tipus: TipusPeriode;
+  any: number; // 2025..2090
+  quad: 1 | 2;
+  startStr: string; // yyyy-MM-dd
+  endStr: string; // yyyy-MM-dd
 }
 // Assignacions per període: clau "YYYY-MM-DD|slotIndex" → [subjectId,...]
 type AssignedMap = Record<string, string[]>;
@@ -155,7 +160,7 @@ export default function ExamPlanner() {
     {
       id: 1,
       tipus: "PARCIAL",
-      any: new Date().getFullYear() as 2025,
+      any: new Date().getFullYear(),
       quad: 1,
       startStr: format(mondayOfWeek(new Date()), "yyyy-MM-dd"),
       endStr: format(fridayOfWeek(new Date()), "yyyy-MM-dd"),
@@ -177,9 +182,13 @@ export default function ExamPlanner() {
     {}
   );
 
-  /* Utilitats */
+  /* Filtres (calaix d’assignatures) */
+  const [filterCurs, setFilterCurs] = useState<string | "">("");
+  const [filterQuad, setFilterQuad] = useState<0 | 1 | 2>(0); // 0 = (Tots)
+
   const activePeriod = periods.find((p) => p.id === activePid)!;
   const dayLabels = ["Dl/Mon", "Dt/Tu", "Dc/Wed", "Dj/Thu", "Dv/Fri"];
+
   function isDisabledDay(d: Date, p: PeriodMeta) {
     const sd = parseISO(p.startStr);
     const ed = parseISO(p.endStr);
@@ -189,7 +198,19 @@ export default function ExamPlanner() {
     return `${dateIso}|${slotIndex}`;
   }
 
-  /* Bloqueig global: una mateixa assignatura no es pot usar dues vegades en cap període */
+  /* Llistes per als desplegables de filtre (derivades del CSV) */
+  const allCursos = useMemo(
+    () => Array.from(new Set(subjects.map((s) => s.curs).filter(Boolean))) as string[],
+    [subjects]
+  );
+
+  /* Quan canvies de pestanya, sincronitza el filtre de quadrimestre pel del període */
+  useEffect(() => {
+    const ap = periods.find((p) => p.id === activePid);
+    if (ap) setFilterQuad(ap.quad);
+  }, [activePid, periods]);
+
+  /* Bloqueig global: una mateixa assignatura no es pot usar dues vegades */
   const usedIds = useMemo(() => {
     const s = new Set<string>();
     for (const amap of Object.values(assignedPerPeriod)) {
@@ -199,10 +220,14 @@ export default function ExamPlanner() {
     }
     return s;
   }, [assignedPerPeriod]);
-  const availableSubjects = useMemo(
-    () => subjects.filter((s) => !usedIds.has(s.id)),
-    [subjects, usedIds]
-  );
+
+  /* Assignatures disponibles + filtres */
+  const availableSubjects = useMemo(() => {
+    return subjects
+      .filter((s) => !usedIds.has(s.id))
+      .filter((s) => (filterCurs ? s.curs === filterCurs : true))
+      .filter((s) => (filterQuad ? s.quad === filterQuad : true));
+  }, [subjects, usedIds, filterCurs, filterQuad]);
 
   /* Drag & drop */
   function onDragEnd(e: any) {
@@ -235,7 +260,12 @@ export default function ExamPlanner() {
     });
   }
 
-  function removeOneFromCell(pid: number, dateIso: string, slotIndex: number, subjectId: string) {
+  function removeOneFromCell(
+    pid: number,
+    dateIso: string,
+    slotIndex: number,
+    subjectId: string
+  ) {
     const key = cellKey(dateIso, slotIndex);
     setAssignedPerPeriod((prev) => {
       const prevMap = prev[pid] ?? {};
@@ -250,32 +280,39 @@ export default function ExamPlanner() {
 
   /* Gestió períodes */
   function addPeriod() {
-    if (periods.length >= 5) { alert("Pots tenir com a màxim 5 períodes."); return; }
-    const newId = Math.max(0, ...periods.map(p=>p.id)) + 1;
+    if (periods.length >= 5) {
+      alert("Pots tenir com a màxim 5 períodes.");
+      return;
+    }
+    const newId = Math.max(0, ...periods.map((p) => p.id)) + 1;
     const today = new Date();
     const meta: PeriodMeta = {
       id: newId,
       tipus: "PARCIAL",
-      any: (today.getFullYear() as any),
+      any: today.getFullYear(),
       quad: 1,
       startStr: format(mondayOfWeek(today), "yyyy-MM-dd"),
       endStr: format(fridayOfWeek(today), "yyyy-MM-dd"),
     };
     setPeriods([...periods, meta]);
-    setSlotsPerPeriod((sp)=> ({...sp, [newId]: [{start:"08:00", end:"10:00"}]}));
+    setSlotsPerPeriod((sp) => ({ ...sp, [newId]: [{ start: "08:00", end: "10:00" }] }));
     setActivePid(newId);
   }
   function removePeriod(id: number) {
     if (!confirm("Segur que vols eliminar aquest període?")) return;
-    setPeriods(periods.filter(p=>p.id!==id));
-    setAssignedPerPeriod((ap)=> {
-      const c = {...ap}; delete c[id]; return c;
+    setPeriods(periods.filter((p) => p.id !== id));
+    setAssignedPerPeriod((ap) => {
+      const c = { ...ap };
+      delete c[id];
+      return c;
     });
-    setSlotsPerPeriod((sp)=> {
-      const c = {...sp}; delete c[id]; return c;
+    setSlotsPerPeriod((sp) => {
+      const c = { ...sp };
+      delete c[id];
+      return c;
     });
-    if (activePid === id && periods.length>1) {
-      const rest = periods.filter(p=>p.id!==id);
+    if (activePid === id && periods.length > 1) {
+      const rest = periods.filter((p) => p.id !== id);
       setActivePid(rest[0].id);
     }
   }
@@ -288,14 +325,19 @@ export default function ExamPlanner() {
       assignedPerPeriod,
       subjects,
     };
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+    const blob = new Blob([JSON.stringify(data, null, 2)], {
+      type: "application/json",
+    });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
-    a.href = url; a.download = "planificador-examens.json"; a.click();
+    a.href = url;
+    a.download = "planificador-examens.json";
+    a.click();
     URL.revokeObjectURL(url);
   }
   function importJSON(ev: React.ChangeEvent<HTMLInputElement>) {
-    const f = ev.target.files?.[0]; if (!f) return;
+    const f = ev.target.files?.[0];
+    if (!f) return;
     const reader = new FileReader();
     reader.onload = () => {
       try {
@@ -304,105 +346,143 @@ export default function ExamPlanner() {
         if (data.slotsPerPeriod) setSlotsPerPeriod(data.slotsPerPeriod);
         if (data.assignedPerPeriod) setAssignedPerPeriod(data.assignedPerPeriod);
         if (Array.isArray(data.subjects)) setSubjects(data.subjects);
-        // actiu al primer període si cal
-        if (Array.isArray(data.periods) && data.periods.length) {
+        if (Array.isArray(data.periods) && data.periods.length)
           setActivePid(data.periods[0].id);
-        }
-      } catch { alert("JSON no vàlid"); }
+      } catch {
+        alert("JSON no vàlid");
+      }
     };
     reader.readAsText(f);
     ev.currentTarget.value = "";
   }
 
   function exportCSV() {
-    // Capsa: PeriodeLabel, Date, SlotStart, SlotEnd, Codigo, Siglas, Nivel
+    // Capçalera
     const rows: string[] = [];
-    rows.push("Periode,Data,Slot,HoraInici,HoraFi,Codigo,Siglas,Nivel");
+    rows.push(
+      "Periode,Data,Slot,HoraInici,HoraFi,Codigo,Siglas,Nivel,Curs,Quadrimestre"
+    );
     for (const p of periods) {
       const slots = slotsPerPeriod[p.id] ?? [];
       const amap = assignedPerPeriod[p.id] ?? {};
-      for (const { mon } of eachWeek(mondayOfWeek(parseISO(p.startStr)), fridayOfWeek(parseISO(p.endStr)))) {
-        for (let si=0; si<slots.length; si++) {
-          for (let i=0;i<5;i++) {
+      for (const { mon } of eachWeek(
+        mondayOfWeek(parseISO(p.startStr)),
+        fridayOfWeek(parseISO(p.endStr))
+      )) {
+        for (let si = 0; si < slots.length; si++) {
+          for (let i = 0; i < 5; i++) {
             const day = addDays(mon, i);
             if (isDisabledDay(day, p)) continue;
             const dateIso = format(day, "yyyy-MM-dd");
             const key = cellKey(dateIso, si);
             const ids = amap[key] ?? [];
-            ids.forEach(id => {
-              const s = subjects.find(x=>x.id===id);
+            ids.forEach((id) => {
+              const s = subjects.find((x) => x.id === id);
               if (!s) return;
               const label = `${p.tipus} ${p.any} Q${p.quad}`;
-              rows.push([
-                label,
-                format(day,"dd/MM/yyyy"),
-                `${si+1}`,
-                slots[si]?.start ?? "",
-                slots[si]?.end ?? "",
-                s.codigo, s.siglas, s.nivel
-              ].map(v => `"${String(v).replace(/"/g,'""')}"`).join(","));
-            });
-          }
-        }
-      }
-    }
-    const blob = new Blob([rows.join("\n")], {type:"text/csv;charset=utf-8"});
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a"); a.href=url; a.download="examenes.csv"; a.click();
-    URL.revokeObjectURL(url);
-  }
-
-  // Ajusta aquí si vols el PRISMA exacte: amplades, ordre i padding.
-  function formatTxtLine(
-    label: string, dateStr: string, slotIdx: number, start: string, end: string, s: Subject
-  ) {
-    // Exemple simple amb padding; adapta a l’especificació PRISMA si cal:
-    const pad = (t: string, w: number) => (t || "").slice(0,w).padEnd(w," ");
-    return (
-      pad(label, 20) +
-      pad(dateStr, 10) +      // dd/MM/yyyy
-      pad(String(slotIdx), 2) +
-      pad(start, 5) +
-      pad(end, 5) +
-      pad(s.codigo, 12) +
-      pad(s.siglas, 12) +
-      pad(s.nivel, 10)
-    );
-  }
-
-  function exportTXT() {
-    const lines: string[] = [];
-    lines.push("EXAMENS_EXPORT"); // capçalera simple
-    for (const p of periods) {
-      const slots = slotsPerPeriod[p.id] ?? [];
-      const amap = assignedPerPeriod[p.id] ?? {};
-      const label = `${p.tipus} ${p.any} Q${p.quad}`;
-      for (const { mon } of eachWeek(mondayOfWeek(parseISO(p.startStr)), fridayOfWeek(parseISO(p.endStr)))) {
-        for (let si=0; si<slots.length; si++) {
-          for (let i=0;i<5;i++) {
-            const day = addDays(mon, i);
-            if (isDisabledDay(day, p)) continue;
-            const dateIso = format(day, "yyyy-MM-dd");
-            const key = cellKey(dateIso, si);
-            const ids = amap[key] ?? [];
-            ids.forEach(id => {
-              const subj = subjects.find(x=>x.id===id);
-              if (!subj) return;
-              lines.push(
-                formatTxtLine(label, format(day,"dd/MM/yyyy"), si+1, slots[si]?.start ?? "", slots[si]?.end ?? "", subj)
+              rows.push(
+                [
+                  label,
+                  format(day, "dd/MM/yyyy"),
+                  `${si + 1}`,
+                  slots[si]?.start ?? "",
+                  slots[si]?.end ?? "",
+                  s.codigo,
+                  s.siglas,
+                  s.nivel,
+                  s.curs ?? "",
+                  s.quad ?? "",
+                ]
+                  .map((v) => `"${String(v).replace(/"/g, '""')}"`)
+                  .join(",")
               );
             });
           }
         }
       }
     }
-    const blob = new Blob([lines.join("\n")], {type:"text/plain;charset=utf-8"});
+    const blob = new Blob([rows.join("\n")], {
+      type: "text/csv;charset=utf-8",
+    });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement("a"); a.href=url; a.download="examenes.txt"; a.click();
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "examenes.csv";
+    a.click();
     URL.revokeObjectURL(url);
   }
 
-  /* (Opcional) Arrencar amb preset/data via querystring, com abans */
+  // TXT (format fix simplificat). Ajusta amplades/ordre per PRISMA si cal.
+  function formatTxtLine(
+    label: string,
+    dateStr: string,
+    slotIdx: number,
+    start: string,
+    end: string,
+    s: Subject
+  ) {
+    const pad = (t: string, w: number) => (t || "").slice(0, w).padEnd(w, " ");
+    return (
+      pad(label, 20) + // PERIODE
+      pad(dateStr, 10) + // dd/MM/yyyy
+      pad(String(slotIdx), 2) +
+      pad(start, 5) +
+      pad(end, 5) +
+      pad(s.codigo, 12) +
+      pad(s.siglas, 12) +
+      pad(s.nivel, 10) +
+      pad(s.curs ?? "", 12) +
+      pad(String(s.quad ?? ""), 1)
+    );
+  }
+  function exportTXT() {
+    const lines: string[] = [];
+    lines.push("EXAMENS_EXPORT");
+    for (const p of periods) {
+      const slots = slotsPerPeriod[p.id] ?? [];
+      const amap = assignedPerPeriod[p.id] ?? {};
+      const label = `${p.tipus} ${p.any} Q${p.quad}`;
+      for (const { mon } of eachWeek(
+        mondayOfWeek(parseISO(p.startStr)),
+        fridayOfWeek(parseISO(p.endStr))
+      )) {
+        for (let si = 0; si < slots.length; si++) {
+          for (let i = 0; i < 5; i++) {
+            const day = addDays(mon, i);
+            if (isDisabledDay(day, p)) continue;
+            const dateIso = format(day, "yyyy-MM-dd");
+            const key = cellKey(dateIso, si);
+            const ids = amap[key] ?? [];
+            ids.forEach((id) => {
+              const subj = subjects.find((x) => x.id === id);
+              if (!subj) return;
+              lines.push(
+                formatTxtLine(
+                  label,
+                  format(day, "dd/MM/yyyy"),
+                  si + 1,
+                  slots[si]?.start ?? "",
+                  slots[si]?.end ?? "",
+                  subj
+                )
+              );
+            });
+          }
+        }
+      }
+    }
+    const blob = new Blob([lines.join("\n")], {
+      type: "text/plain;charset=utf-8",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "examenes.txt";
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  /* (Opcional) Arrencar amb preset/data via querystring */
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const preset = params.get("preset");
@@ -414,9 +494,11 @@ export default function ExamPlanner() {
           try {
             if (Array.isArray(json.periods)) setPeriods(json.periods);
             if (json.slotsPerPeriod) setSlotsPerPeriod(json.slotsPerPeriod);
-            if (json.assignedPerPeriod) setAssignedPerPeriod(json.assignedPerPeriod);
+            if (json.assignedPerPeriod)
+              setAssignedPerPeriod(json.assignedPerPeriod);
             if (Array.isArray(json.subjects)) setSubjects(json.subjects);
-            if (Array.isArray(json.periods) && json.periods.length) setActivePid(json.periods[0].id);
+            if (Array.isArray(json.periods) && json.periods.length)
+              setActivePid(json.periods[0].id);
           } catch {}
         })
         .catch(() => {});
@@ -428,9 +510,11 @@ export default function ExamPlanner() {
         const json = JSON.parse(decodeURIComponent(escape(atob(data))));
         if (Array.isArray(json.periods)) setPeriods(json.periods);
         if (json.slotsPerPeriod) setSlotsPerPeriod(json.slotsPerPeriod);
-        if (json.assignedPerPeriod) setAssignedPerPeriod(json.assignedPerPeriod);
+        if (json.assignedPerPeriod)
+          setAssignedPerPeriod(json.assignedPerPeriod);
         if (Array.isArray(json.subjects)) setSubjects(json.subjects);
-        if (Array.isArray(json.periods) && json.periods.length) setActivePid(json.periods[0].id);
+        if (Array.isArray(json.periods) && json.periods.length)
+          setActivePid(json.periods[0].id);
       } catch {}
     }
   }, []);
@@ -438,13 +522,16 @@ export default function ExamPlanner() {
   /* ---------- Render ---------- */
   return (
     <div className="p-6 max-w-[1200px] mx-auto">
-      <h1 className="text-2xl font-bold mb-2">Planificador d'exàmens (drag & drop) — Períodes</h1>
+      <h1 className="text-2xl font-bold mb-2">
+        Planificador d'exàmens (drag & drop) — Períodes
+      </h1>
       <p className="text-sm mb-6">
-        Defineix fins a 5 períodes (tipus, any i quadrimestre), cadascun amb dates i franges horàries pròpies.
-        Les assignatures programades desapareixen de la safata per evitar duplicats globals.
+        Defineix fins a 5 períodes (tipus, any i quadrimestre), cadascun amb
+        dates i franges horàries pròpies. Les assignatures programades
+        desapareixen de la safata per evitar duplicats globals.
       </p>
 
-      {/* Barra d'accions global (abans de les pestanyes) */}
+      {/* Barra d'accions global */}
       <div className="p-4 rounded-2xl border shadow-sm bg-white mb-6">
         <h2 className="font-semibold mb-3">Dades i intercanvi</h2>
         <div className="flex flex-wrap gap-3 items-center">
@@ -467,31 +554,80 @@ export default function ExamPlanner() {
                       const out: Subject[] = [];
                       for (const r of rows) {
                         const codigo =
-                          r.codigo || r.CODIGO || r.Codi || r["CODI UPC"] || r.codi || r.CODI;
+                          r.codigo ||
+                          r.CODIGO ||
+                          r.Codi ||
+                          r["CODI UPC"] ||
+                          r.codi ||
+                          r.CODI;
                         const siglas =
-                          r.siglas || r.SIGLAS || r.sigles || r["sigles"] || r.SIGLES;
+                          r.siglas ||
+                          r.SIGLAS ||
+                          r.sigles ||
+                          r["sigles"] ||
+                          r.SIGLES;
                         const nivel =
-                          r.nivel || r.NIVEL || r.nivell || r.NIVELL || r.level || r.LEVEL;
+                          r.nivel ||
+                          r.NIVEL ||
+                          r.nivell ||
+                          r.NIVELL ||
+                          r.level ||
+                          r.LEVEL;
+
+                        const curs =
+                          r.curs ||
+                          r.curso ||
+                          r.curso_academico ||
+                          r.curs_academic ||
+                          r.CURS ||
+                          r.CURSO;
+                        const quadRaw =
+                          r.quadrimestre ||
+                          r.quad ||
+                          r.quarter ||
+                          r.Q ||
+                          r.QUADRIMESTRE ||
+                          r.QUAD;
+                        const quadNum = quadRaw
+                          ? Number(String(quadRaw).replace(/\D/g, ""))
+                          : undefined;
+                        const quad =
+                          quadNum === 1 || quadNum === 2
+                            ? (quadNum as 1 | 2)
+                            : undefined;
+
                         if (!codigo && !siglas) continue;
+
                         out.push({
                           id: String(codigo || siglas),
                           codigo: String(codigo || ""),
                           siglas: String(siglas || ""),
                           nivel: String(nivel || ""),
+                          curs: curs ? String(curs) : undefined,
+                          quad,
                         });
                       }
-                      if (!out.length) { alert("CSV sense files vàlides."); return; }
+                      if (!out.length) {
+                        alert("CSV sense files vàlides.");
+                        return;
+                      }
                       // Evita IDs duplicats fent-los únics
                       const seen = new Set<string>();
                       const unique = out.map((s) => {
                         let id = s.id;
-                        while (seen.has(id)) id = id + "-" + Math.random().toString(36).slice(2,5);
+                        while (seen.has(id))
+                          id =
+                            id +
+                            "-" +
+                            Math.random().toString(36).slice(2, 5);
                         seen.add(id);
                         return { ...s, id };
                       });
                       setSubjects(unique);
                       alert(`Importades ${unique.length} assignatures del CSV.`);
-                    } catch { alert("Error processant el CSV"); }
+                    } catch {
+                      alert("Error processant el CSV");
+                    }
                   },
                 });
                 (e.currentTarget as HTMLInputElement).value = "";
@@ -500,12 +636,32 @@ export default function ExamPlanner() {
           </label>
 
           {/* Exportacions */}
-          <button onClick={exportCSV} className="px-3 py-2 border rounded-xl shadow-sm">Exportar CSV</button>
-          <button onClick={exportTXT} className="px-3 py-2 border rounded-xl shadow-sm">Exportar TXT</button>
-          <button onClick={exportJSON} className="px-3 py-2 border rounded-xl shadow-sm">Exportar JSON</button>
+          <button
+            onClick={exportCSV}
+            className="px-3 py-2 border rounded-xl shadow-sm"
+          >
+            Exportar CSV
+          </button>
+          <button
+            onClick={exportTXT}
+            className="px-3 py-2 border rounded-xl shadow-sm"
+          >
+            Exportar TXT
+          </button>
+          <button
+            onClick={exportJSON}
+            className="px-3 py-2 border rounded-xl shadow-sm"
+          >
+            Exportar JSON
+          </button>
           <label className="px-3 py-2 border rounded-xl shadow-sm cursor-pointer bg-white">
             Importar JSON
-            <input type="file" accept="application/json" className="hidden" onChange={importJSON} />
+            <input
+              type="file"
+              accept="application/json"
+              className="hidden"
+              onChange={importJSON}
+            />
           </label>
 
           <span className="text-xs text-gray-500 ml-auto">
@@ -531,9 +687,17 @@ export default function ExamPlanner() {
           ))}
         </div>
         <div className="flex gap-2">
-          <button onClick={addPeriod} className="px-3 py-2 border rounded-xl shadow-sm">Afegir període</button>
+          <button
+            onClick={addPeriod}
+            className="px-3 py-2 border rounded-xl shadow-sm"
+          >
+            Afegir període
+          </button>
           {periods.length > 1 && (
-            <button onClick={()=>removePeriod(activePid)} className="px-3 py-2 border rounded-xl shadow-sm">
+            <button
+              onClick={() => removePeriod(activePid)}
+              className="px-3 py-2 border rounded-xl shadow-sm"
+            >
               Eliminar període actiu
             </button>
           )}
@@ -551,7 +715,9 @@ export default function ExamPlanner() {
               value={activePeriod.tipus}
               onChange={(e) => {
                 const v = e.target.value as TipusPeriode;
-                setPeriods(periods.map(p => p.id===activePid? {...p, tipus: v}: p));
+                setPeriods(
+                  periods.map((p) => (p.id === activePid ? { ...p, tipus: v } : p))
+                );
               }}
               className="w-full border rounded-xl p-2"
             >
@@ -565,21 +731,30 @@ export default function ExamPlanner() {
               value={activePeriod.any}
               onChange={(e) => {
                 const v = Number(e.target.value);
-                setPeriods(periods.map(p => p.id===activePid? {...p, any: v}: p));
+                setPeriods(
+                  periods.map((p) => (p.id === activePid ? { ...p, any: v } : p))
+                );
               }}
               className="w-full border rounded-xl p-2"
             >
-              {Array.from({length: 2090-2025+1}, (_,i)=>2025+i).map(y=>(
-                <option key={y} value={y}>{y}</option>
-              ))}
+              {Array.from({ length: 2090 - 2025 + 1 }, (_, i) => 2025 + i).map(
+                (y) => (
+                  <option key={y} value={y}>
+                    {y}
+                  </option>
+                )
+              )}
             </select>
 
             <label className="block text-sm mt-3 mb-1">Quadrimestre</label>
             <select
               value={activePeriod.quad}
               onChange={(e) => {
-                const v = Number(e.target.value) as 1|2;
-                setPeriods(periods.map(p => p.id===activePid? {...p, quad: v}: p));
+                const v = Number(e.target.value) as 1 | 2;
+                setPeriods(
+                  periods.map((p) => (p.id === activePid ? { ...p, quad: v } : p))
+                );
+                setFilterQuad(v); // sincronitza el filtre
               }}
               className="w-full border rounded-xl p-2"
             >
@@ -591,32 +766,46 @@ export default function ExamPlanner() {
             <input
               type="date"
               value={activePeriod.startStr}
-              onChange={(e)=> setPeriods(periods.map(p => p.id===activePid? {...p, startStr: e.target.value}: p))}
+              onChange={(e) =>
+                setPeriods(
+                  periods.map((p) =>
+                    p.id === activePid ? { ...p, startStr: e.target.value } : p
+                  )
+                )
+              }
               className="w-full border rounded-xl p-2"
             />
             <label className="block text-sm mt-3 mb-1">Fi</label>
             <input
               type="date"
               value={activePeriod.endStr}
-              onChange={(e)=> setPeriods(periods.map(p => p.id===activePid? {...p, endStr: e.target.value}: p))}
+              onChange={(e) =>
+                setPeriods(
+                  periods.map((p) =>
+                    p.id === activePid ? { ...p, endStr: e.target.value } : p
+                  )
+                )
+              }
               className="w-full border rounded-xl p-2"
             />
           </div>
 
           <div className="p-4 rounded-2xl border shadow-sm bg-white md:col-span-2">
-            <h2 className="font-semibold mb-3">Franges horàries (per a aquest període)</h2>
+            <h2 className="font-semibold mb-3">
+              Franges horàries (per a aquest període)
+            </h2>
             <div className="space-y-2">
               {(slotsPerPeriod[activePid] ?? []).map((s, i) => (
                 <div key={i} className="flex items-center gap-2">
-                  <span className="text-sm w-6">{i+1}.</span>
+                  <span className="text-sm w-6">{i + 1}.</span>
                   <input
                     value={s.start}
-                    onChange={(e)=>{
-                      const v=e.target.value;
-                      setSlotsPerPeriod(sp => {
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setSlotsPerPeriod((sp) => {
                         const arr = [...(sp[activePid] ?? [])];
-                        arr[i] = {...arr[i], start: v};
-                        return {...sp, [activePid]: arr};
+                        arr[i] = { ...arr[i], start: v };
+                        return { ...sp, [activePid]: arr };
                       });
                     }}
                     className="border rounded-xl p-2 w-28"
@@ -625,32 +814,33 @@ export default function ExamPlanner() {
                   <span>–</span>
                   <input
                     value={s.end}
-                    onChange={(e)=>{
-                      const v=e.target.value;
-                      setSlotsPerPeriod(sp => {
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setSlotsPerPeriod((sp) => {
                         const arr = [...(sp[activePid] ?? [])];
-                        arr[i] = {...arr[i], end: v};
-                        return {...sp, [activePid]: arr};
+                        arr[i] = { ...arr[i], end: v };
+                        return { ...sp, [activePid]: arr };
                       });
                     }}
                     className="border rounded-xl p-2 w-28"
                     placeholder="HH:mm"
                   />
                   <button
-                    onClick={()=>{
-                      setSlotsPerPeriod(sp=>{
-                        const arr=[...(sp[activePid]??[])].filter((_,idx)=> idx!==i);
-                        return {...sp, [activePid]: arr};
+                    onClick={() => {
+                      setSlotsPerPeriod((sp) => {
+                        const arr = [...(sp[activePid] ?? [])].filter(
+                          (_, idx) => idx !== i
+                        );
+                        return { ...sp, [activePid]: arr };
                       });
-                      // Netejar assignacions d’aquesta franja
-                      setAssignedPerPeriod(ap=>{
-                        const amap = {...(ap[activePid] ?? {})};
+                      // Opcional: netejar assignacions d’aquesta franja
+                      setAssignedPerPeriod((ap) => {
+                        const amap = { ...(ap[activePid] ?? {}) };
                         for (const k of Object.keys(amap)) {
                           const slotIdx = Number(k.split("|")[1]);
                           if (slotIdx === i) delete amap[k];
                         }
-                        // Reindexació opcional: es pot ometre per simplicitat
-                        return {...ap, [activePid]: amap};
+                        return { ...ap, [activePid]: amap };
                       });
                     }}
                     className="ml-2 text-xs px-2 py-1 border rounded-lg"
@@ -661,15 +851,18 @@ export default function ExamPlanner() {
               ))}
             </div>
             <button
-              onClick={()=>{
-                setSlotsPerPeriod(sp=>{
+              onClick={() => {
+                setSlotsPerPeriod((sp) => {
                   const cur = sp[activePid] ?? [];
-                  const last = cur[cur.length-1];
-                  const nextStart = last? last.end : "08:00";
-                  const [h,m] = nextStart.split(":").map(Number);
-                  const endH = (h+2).toString().padStart(2,"0");
-                  const next = { start: nextStart, end: `${endH}:${(m||0).toString().padStart(2,"0")}` };
-                  return {...sp, [activePid]: [...cur, next]};
+                  const last = cur[cur.length - 1];
+                  const nextStart = last ? last.end : "08:00";
+                  const [h, m] = nextStart.split(":").map(Number);
+                  const endH = (h + 2).toString().padStart(2, "0");
+                  const next = {
+                    start: nextStart,
+                    end: `${endH}:${(m || 0).toString().padStart(2, "0")}`,
+                  };
+                  return { ...sp, [activePid]: [...cur, next] };
                 });
               }}
               className="mt-3 px-3 py-2 border rounded-xl shadow-sm"
@@ -680,15 +873,66 @@ export default function ExamPlanner() {
         </div>
       )}
 
-      {/* Calaix d'assignatures (comú) */}
+      {/* Calaix d'assignatures (comú) + filtres */}
       <div className="p-4 rounded-2xl border shadow-sm bg-white mb-6">
         <h2 className="font-semibold mb-3">Assignatures (arrossega)</h2>
+
+        {/* Filtres */}
+        <div className="flex flex-wrap items-center gap-3 mb-3">
+          <div className="text-sm">
+            <label className="mr-2">Curs:</label>
+            <select
+              value={filterCurs}
+              onChange={(e) => setFilterCurs(e.target.value)}
+              className="border rounded-xl p-2"
+            >
+              <option value="">(Tots)</option>
+              {allCursos.map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="text-sm">
+            <label className="mr-2">Quadrimestre:</label>
+            <select
+              value={filterQuad}
+              onChange={(e) => setFilterQuad(Number(e.target.value) as 0 | 1 | 2)}
+              className="border rounded-xl p-2"
+            >
+              <option value={0}>(Tots)</option>
+              <option value={1}>1</option>
+              <option value={2}>2</option>
+            </select>
+          </div>
+
+          <button
+            onClick={() => {
+              setFilterCurs("");
+              setFilterQuad(0);
+            }}
+            className="text-sm px-3 py-2 border rounded-xl shadow-sm"
+          >
+            Neteja filtres
+          </button>
+        </div>
+
         <div className="flex flex-wrap gap-2">
           {availableSubjects.map((s) => (
-            <Chip key={s.id} id={s.id} label={`${s.siglas} · ${s.codigo} · ${s.nivel}`} />
+            <Chip
+              key={s.id}
+              id={s.id}
+              label={`${s.siglas} · ${s.codigo} · ${s.nivel}${
+                s.curs ? " · " + s.curs : ""
+              }${s.quad ? " · Q" + s.quad : ""}`}
+            />
           ))}
           {availableSubjects.length === 0 && (
-            <div className="text-xs text-gray-500 italic">No queden assignatures per programar.</div>
+            <div className="text-xs text-gray-500 italic">
+              No queden assignatures per programar amb els filtres actuals.
+            </div>
           )}
         </div>
       </div>
@@ -699,65 +943,52 @@ export default function ExamPlanner() {
           <div className="mb-8">
             <div className="flex items-center gap-3 mb-2">
               <h3 className="text-lg font-semibold">
-                {activePeriod.tipus} {activePeriod.any} Q{activePeriod.quad} — {format(parseISO(activePeriod.startStr), "dd/MM")} a {format(parseISO(activePeriod.endStr), "dd/MM")}
+                {activePeriod.tipus} {activePeriod.any} Q{activePeriod.quad} —{" "}
+                {format(parseISO(activePeriod.startStr), "dd/MM")} a{" "}
+                {format(parseISO(activePeriod.endStr), "dd/MM")}
               </h3>
               <span className="text-sm text-gray-500">(dl–dv)</span>
             </div>
-            <div className="overflow-x-auto">
-              <table className="w-full border-collapse text-sm">
-                <thead>
-                  <tr>
-                    <th className="border p-2 w-[160px] text-left">franja horària/Time slot</th>
-                    {Array.from({length:5}).map((_,i)=>(
-  <th key={i} className="border p-2 min-w-[170px] text-left">
-    <div className="font-semibold">{dayLabels[i]}</div>
-    {/* Mostrem la data real de cada setmana a la taula del cos */}
-  </th>
-))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {(slotsPerPeriod[activePid] ?? []).map((s, slotIndex) => (
-                    <tr key={slotIndex}>
-                      <td className="border p-2 align-top font-medium whitespace-nowrap">{s.start}-{s.end}</td>
-                      {Array.from({length:5}).map((_,i)=>{
-                        // La capçalera és fixa (Dl..Dv). Les dates exactes es calculen per setmana, a sota.
-                        return <td key={i} className="border p-2 text-xs text-gray-400">Vegeu les setmanes</td>;
-                      })}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
 
-            {/* Taules per setmana dins del període actiu */}
-            {[...eachWeek(mondayOfWeek(parseISO(activePeriod.startStr)), fridayOfWeek(parseISO(activePeriod.endStr)))].map(({mon, fri}, wIdx) => (
+            {/* Setmanes del període actiu */}
+            {[...eachWeek(
+              mondayOfWeek(parseISO(activePeriod.startStr)),
+              fridayOfWeek(parseISO(activePeriod.endStr))
+            )].map(({ mon, fri }, wIdx) => (
               <div key={wIdx} className="mt-6">
                 <div className="flex items-center gap-3 mb-2">
-                  <h4 className="font-semibold">Setmana {format(mon,"dd/MM")} — {format(fri,"dd/MM")}</h4>
+                  <h4 className="font-semibold">
+                    Setmana {format(mon, "dd/MM")} — {format(fri, "dd/MM")}
+                  </h4>
                   <span className="text-xs text-gray-500">(dl–dv)</span>
                 </div>
                 <div className="overflow-x-auto">
                   <table className="w-full border-collapse text-sm">
                     <thead>
                       <tr>
-                        <th className="border p-2 w-[160px] text-left">franja horària/Time slot</th>
-                        {Array.from({length:5}).map((_,i)=>{
-                          const day = addDays(mon, i);
-                          return (
-                            <th key={i} className="border p-2 min-w-[170px] text-left">
-                              <div className="font-semibold">{dayLabels[i]}</div>
-                              <div className="text-xs text-gray-500">{fmtDM(day)}</div>
-                            </th>
-                          );
-                        })}
+                        <th className="border p-2 w-[160px] text-left">
+                          franja horària/Time slot
+                        </th>
+                        {Array.from({ length: 5 }).map((_, i) => (
+                          <th
+                            key={i}
+                            className="border p-2 min-w-[170px] text-left"
+                          >
+                            <div className="font-semibold">{dayLabels[i]}</div>
+                            <div className="text-xs text-gray-500">
+                              {fmtDM(addDays(mon, i))}
+                            </div>
+                          </th>
+                        ))}
                       </tr>
                     </thead>
                     <tbody>
                       {(slotsPerPeriod[activePid] ?? []).map((s, slotIndex) => (
                         <tr key={slotIndex}>
-                          <td className="border p-2 align-top font-medium whitespace-nowrap">{s.start}-{s.end}</td>
-                          {Array.from({length:5}).map((_,i)=>{
+                          <td className="border p-2 align-top font-medium whitespace-nowrap">
+                            {s.start}-{s.end}
+                          </td>
+                          {Array.from({ length: 5 }).map((_, i) => {
                             const day = addDays(mon, i);
                             const dateIso = format(day, "yyyy-MM-dd");
                             const disabled = isDisabledDay(day, activePeriod);
@@ -773,7 +1004,14 @@ export default function ExamPlanner() {
                                 id={`cell:${activePid}:${dateIso}:${slotIndex}`}
                                 disabled={disabled}
                                 assignedList={assignedList}
-                                onRemoveOne={(subjectId)=> removeOneFromCell(activePid, dateIso, slotIndex, subjectId)}
+                                onRemoveOne={(subjectId) =>
+                                  removeOneFromCell(
+                                    activePid,
+                                    dateIso,
+                                    slotIndex,
+                                    subjectId
+                                  )
+                                }
                               />
                             );
                           })}
@@ -790,9 +1028,18 @@ export default function ExamPlanner() {
 
       <div className="mt-8 text-xs text-gray-500">
         <ul className="list-disc ml-5 space-y-1">
-          <li>Fins a 5 períodes amb pestanyes; cada període té les seves franges i dates.</li>
-          <li>Es poden programar múltiples assignatures a una mateixa cel·la, però cada assignatura només un cop a tot el conjunt de períodes.</li>
-          <li>Exporta CSV/TXT (llistat d’exàmens) i JSON (estat complet) des de la barra superior.</li>
+          <li>
+            Fins a 5 períodes amb pestanyes; cada període té les seves franges i
+            dates.
+          </li>
+          <li>
+            Es poden programar múltiples assignatures a una mateixa cel·la, però
+            cada assignatura només un cop a tot el conjunt de períodes.
+          </li>
+          <li>
+            Exporta CSV/TXT i JSON des de la barra superior. Aplica filtres per
+            <em> curs </em> i <em> quadrimestre </em> al calaix d’assignatures.
+          </li>
         </ul>
       </div>
     </div>
